@@ -4,7 +4,7 @@ module Convex
 using OrderedCollections: OrderedDict
 using LinearAlgebra
 using SparseArrays
-using AbstractTrees: AbstractTrees
+using AbstractTrees: AbstractTrees, children
 
 using MathOptInterface
 const MOI = MathOptInterface
@@ -27,7 +27,7 @@ export socp
 export Constraint # useful for making abstractly-typed vectors via `Constraint[]`
 
 # Variables
-export Constant, ComplexVariable, HermitianSemidefinite, Semidefinite, Variable
+export constant, ComplexVariable, HermitianSemidefinite, Semidefinite, Variable
 export curvature, evaluate, fix!, free!, monotonicity, sign, vexity
 export BinVar, IntVar, ContVar, vartype, vartype!
 export constraints, add_constraint!, set_value!, evaluate
@@ -36,7 +36,7 @@ export constraints, add_constraint!, set_value!, evaluate
 export Positive, Negative, ComplexSign, NoSign
 
 # Problems
-export add_constraints!, maximize, minimize, Problem, satisfy, solve!
+export add_constraints!, maximize, minimize, Problem, satisfy, solve!, solve2!
 
 
 # Module level globals
@@ -86,22 +86,49 @@ Set via:
 """
 const MAXDIGITS= Ref(3)
 
+
+# where do these go?
+# used so far only in `Constant`
+vectorize(v::AbstractVector) = v
+vectorize(v::Number) = [v]
+vectorize(v::AbstractMatrix) = vec(v)
+
+# where should these go?
+function vec_triu(M)
+    L = LinearIndices(size(M))
+    n, m = size(M)
+    inds = [ L[i,j] for i = 1:n for j = i:m ]
+    return M[inds]
+end
+
+function vec_tril(M)
+    L = LinearIndices(size(M))
+    n, m = size(M)
+    inds = [ L[i,j]  for i = 1:n for j = 1:i ]
+    return M[inds]
+end
+
+
+include("Context.jl")
 ### modeling framework
 include("dcp.jl")
 include("expressions.jl")
 # need to define `Variable` before `UniqueConicForms`
 include("variable.jl")
 include("conic_form.jl")
+
 # need to define `conic_form!` for `Variable`s after `UniqueConicForms`
 include("variable_conic_form.jl")
 include("constant.jl")
 include("constraints/constraints.jl")
-include("constraints/signs_and_sets.jl")
 include("constraints/soc_constraints.jl")
 include("constraints/exp_constraints.jl")
 include("constraints/sdp_constraints.jl")
 include("problems.jl")
 include("solution.jl")
+include("VectorAffineFunctionAsMatrix.jl")
+include("complex.jl")
+include("solve2!.jl")
 
 ### affine atoms
 include("atoms/affine/add_subtract.jl")
@@ -167,6 +194,7 @@ include("utilities/show.jl")
 include("utilities/iteration.jl")
 include("utilities/broadcast.jl")
 include("problem_depot/problem_depot.jl")
+
 
 # Deprecated workaround for memory leak (https://github.com/jump-dev/Convex.jl/issues/83)
 function clearmemory()

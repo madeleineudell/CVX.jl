@@ -30,9 +30,47 @@ struct Constant{T<:Value} <: AbstractExpr
     size::Tuple{Int, Int}
     sign::Sign
 
-    Constant(x::Value, sign::Sign) = new{typeof(x)}(:constant, objectid(x), x, _size(x), sign)
+    function Constant(x::Value, sign::Sign)
+        x isa Complex && error("Real values expected")
+        x isa AbstractArray && eltype(x) isa Complex && error("Real values expected")
+        return new{typeof(x)}(:constant, objectid(x), x, _size(x), sign)
+    end
     Constant(x::Value, check_sign::Bool=true) = Constant(x, check_sign ? _sign(x) : NoSign())
 end
+
+struct ComplexConstant{T<:Value} <: AbstractExpr
+    head::Symbol
+    id_hash::UInt64
+    size::Tuple{Int, Int}
+    real_constant::Constant{T}
+    imag_constant::Constant{T}
+    function ComplexConstant(re::Constant{T}, im::Constant{T}) where {T}
+        size(re) == size(im) || error("size mismatch")
+        new{T}(:complex_constant, rand(UInt64), size(re), re, im)
+    end
+end
+
+AbstractTrees.children(c::ComplexConstant) = tuple()
+vexity(::ComplexConstant) = ConstVexity()
+sign(::ComplexConstant) = ComplexSign()
+
+evaluate(c::ComplexConstant) = evaluate(c.real_constant) + im * evaluate(c.imag_constant)
+
+struct ComplexStructOfVec{T <: AbstractVector{<:Real}}
+    real_vec::T
+    imag_vec::T
+end
+
+Base.real(c::ComplexStructOfVec) = c.real_vec
+Base.imag(c::ComplexStructOfVec) = c.imag_vec
+
+function template(C::ComplexConstant, context::Context)
+    return ComplexStructOfVec(template(C.real_constant, context), template(C.imag_constant, context))
+end
+
+constant(x::Value) = Constant(x)
+constant(x::AbstractArray{<:Complex}) = ComplexConstant(Constant(real(x)), Constant(imag(x)))
+constant(x::Complex) = ComplexConstant(Constant(real(x)), Constant(imag(x)))
 
 #### Constant Definition end     #####
 
@@ -71,13 +109,11 @@ imag_conic_form(x::Constant{<:AbstractVecOrMat{<:Complex}}) = im * vec(imag(x.va
 # value, which Julia can get via Core.arraylen for arrays and knows is 1 for scalars
 length(x::Constant) = length(x.value)
 
-function conic_form!(x::Constant, unique_conic_forms::UniqueConicForms)
-    if !has_conic_form(unique_conic_forms, x)
-        #real_Value = real_conic_form(x)
-        #imag_Value = imag_conic_form(x)
-        objective = ConicObj()
-        objective[objectid(:constant)] = (real_conic_form(x), imag_conic_form(x))
-        cache_conic_form!(unique_conic_forms, x, objective)
-    end
-    return get_conic_form(unique_conic_forms, x)
+function template(C::Constant, ::Context{T}) where T
+    # this should happen at `Constant` creation?
+    # No, we don't have access to `T` yet; that's problem-specific
+    if eltype(C.value) != T
+        C = Constant( T.(C.value) )
+    end 
+    return vectorize(C.value)
 end

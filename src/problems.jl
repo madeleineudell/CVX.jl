@@ -1,16 +1,18 @@
-mutable struct Problem{T<:Real}
+mutable struct Problem{T<:Real} <: AbstractExpr
     head::Symbol
-    objective::AbstractExpr
+    objective::Union{AbstractExpr, Nothing}
     constraints::Array{Constraint}
     status::MOI.TerminationStatusCode
     model::Union{MOI.ModelLike, Nothing}
-
-    function Problem{T}(head::Symbol, objective::AbstractExpr,
+    id_hash::UInt64
+    function Problem{T}(head::Symbol, objective::Union{AbstractExpr, Nothing},
                      constraints::Array=Constraint[]) where {T <: Real}
-        if sign(objective)== Convex.ComplexSign()
+        if objective !== nothing && sign(objective) == Convex.ComplexSign()
             error("Objective cannot be a complex expression")
         else
-            return new(head, objective, constraints, MOI.OPTIMIZE_NOT_CALLED, nothing)
+            p = new(head, objective, constraints, MOI.OPTIMIZE_NOT_CALLED, nothing)
+            p.id_hash = objectid(p) # is this right?
+            return p
         end
     end
 end
@@ -22,6 +24,8 @@ function Base.getproperty(p::Problem, s::Symbol)
         else
             return objective_value(p)
         end
+    elseif s === :size
+        return (1,1)
     else
         return getfield(p, s)
     end
@@ -49,11 +53,28 @@ function vexity(p::Problem)
         typeof(vex) in bad_vex && @warn "Problem not DCP compliant: constraint $i is not DCP"
         constr_vex += vex
     end
+    # problem_vex = problem_vexity(p.head, obj_vex, constr_vex)
     problem_vex = obj_vex + constr_vex
     # this check is redundant
     # typeof(problem_vex) in bad_vex && warn("Problem not DCP compliant")
     return problem_vex
 end
+
+# is this right?
+# function problem_vexity(sense, obj_vexity, constr_vexity)
+#     if constr_vexity == ConstVexity()
+#         return obj_vexity
+#     end
+
+#     if constr_vexity == AffineVexity() && obj_vexity == AffineVexity()
+#         return sense === :maximize ? ConcaveVexity() : ConvexVexity()
+#     end
+
+#     return obj_vexity + constr_vexity
+# end
+
+sign(p::Problem) = sign(p.objective)
+monotonicity(p::Problem) = monotonicity(p.objective)
 
 function conic_form!(p::Problem, unique_conic_forms::UniqueConicForms)
     objective_var = Variable()
@@ -63,6 +84,17 @@ function conic_form!(p::Problem, unique_conic_forms::UniqueConicForms)
         conic_form!(constraint, unique_conic_forms)
     end
     return objective, objective_var.id_hash
+end
+
+function template(p::Problem, context::Context)
+    for c in p.constraints
+        add_constraints_to_context(c, context)
+    end
+    if p.head !== :satisfy
+        return template(p.objective, context)
+    else
+        return nothing
+    end
 end
 
 Problem{T}(head::Symbol, objective::AbstractExpr, constraints::Constraint...) where {T<:Real} =
@@ -89,9 +121,9 @@ maximize(objective::Value, constraints::Array{<:Constraint}=Constraint[]; numeri
     maximize(convert(AbstractExpr, objective), constraints; numeric_type = numeric_type)
 
 # Allow users to simply type satisfy (if there is no objective)
-satisfy(constraints::Constraint...; numeric_type = Float64) = Problem{numeric_type}(:minimize, Constant(0), [constraints...])
+satisfy(constraints::Constraint...; numeric_type = Float64) = Problem{numeric_type}(:satisfy, nothing, [constraints...])
 satisfy(constraints::Array{<:Constraint}=Constraint[]; numeric_type = Float64) =
-    Problem{numeric_type}(:minimize, Constant(0), constraints)
+    Problem{numeric_type}(:satisfy, nothing, constraints)
 satisfy(constraint::Constraint; numeric_type = Float64) = satisfy([constraint]; numeric_type = numeric_type)
 
 # +(constraints, constraints) is defined in constraints.jl
